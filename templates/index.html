@@ -1,0 +1,1098 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>POS — Verdulería / Pollería</title>
+    <meta name="description" content="Sistema Punto de Venta local para verdulería y pollería">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background: #0F172A; color: #F8FAFC; overflow: hidden; }
+        .glass { background: rgba(30,41,59,0.55); backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.06); }
+        .input-seamless { background: transparent; border: 1px solid transparent; outline: none; transition: all .2s; border-radius: .375rem; }
+        .input-seamless:hover { background: rgba(255,255,255,0.04); }
+        .input-seamless:focus { border-color: #10B981; background: rgba(16,185,129,0.06); }
+        input[type=number]::-webkit-inner-spin-button,
+        input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+        input[type=number] { -moz-appearance: textfield; }
+        .fade-enter-active,.fade-leave-active{transition:opacity .2s ease}
+        .fade-enter-from,.fade-leave-to{opacity:0}
+        .slide-up-enter-active,.slide-up-leave-active{transition:all .25s ease}
+        .slide-up-enter-from,.slide-up-leave-to{transform:translateY(12px);opacity:0}
+        ::-webkit-scrollbar{width:5px;height:5px}
+        ::-webkit-scrollbar-track{background:transparent}
+        ::-webkit-scrollbar-thumb{background:#334155;border-radius:8px}
+        ::-webkit-scrollbar-thumb:hover{background:#475569}
+        @media print {
+            body * { visibility: hidden !important; }
+            #ticket-print, #ticket-print * { visibility: visible !important; }
+            #ticket-print { position: fixed; left: 0; top: 0; width: 80mm; font-size: 12px; font-family: 'Courier New', monospace; color: #000; background: #fff; padding: 4mm; margin: 0; z-index: 99999; }
+        }
+        input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(1); }
+    </style>
+</head>
+<body class="antialiased">
+{% raw %}
+<div id="app" class="flex h-screen overflow-hidden">
+
+    <!-- ═══════════ TOASTS ═══════════ -->
+    <div class="fixed top-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none">
+        <transition-group name="fade">
+            <div v-for="t in toasts" :key="t.id"
+                 :class="['pointer-events-auto px-5 py-3 rounded-xl shadow-2xl text-sm font-semibold flex items-center gap-2 min-w-[260px] backdrop-blur-xl border',
+                          t.type==='success' ? 'bg-emerald-900/80 border-emerald-500/40 text-emerald-100' : 'bg-red-900/80 border-red-500/40 text-red-100']">
+                <span>{{ t.type==='success' ? '✅' : '❌' }}</span> {{ t.msg }}
+            </div>
+        </transition-group>
+    </div>
+
+    <!-- ═══════════ SIDEBAR ═══════════ -->
+    <aside class="w-[72px] lg:w-[240px] bg-slate-950/80 border-r border-slate-800/60 flex flex-col shrink-0 z-20">
+        <div class="p-4 lg:px-6 lg:py-5 border-b border-slate-800/60 flex items-center justify-center lg:justify-start gap-3">
+            <span class="text-2xl">🥬</span>
+            <h1 class="text-lg font-extrabold tracking-tight text-emerald-400 hidden lg:block">Mi Verdulería</h1>
+        </div>
+        <nav class="flex-1 py-4 overflow-y-auto">
+            <ul class="space-y-1 px-2">
+                <li v-for="t in tabs" :key="t.id">
+                    <a href="#" @click.prevent="goTo(t.id)"
+                       :class="['flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200 group',
+                                sec===t.id ? 'bg-emerald-500/15 text-emerald-400 shadow-inner shadow-emerald-500/5' : 'text-slate-400 hover:bg-slate-800/60 hover:text-slate-200']">
+                        <span class="text-xl w-7 text-center shrink-0 transition-transform group-hover:scale-110">{{ t.icon }}</span>
+                        <span class="hidden lg:block font-medium text-sm">{{ t.label }}</span>
+                    </a>
+                </li>
+            </ul>
+        </nav>
+        <div class="p-4 border-t border-slate-800/60 text-center hidden lg:block">
+            <span class="text-[10px] text-slate-600 uppercase tracking-widest">POS v1.0</span>
+        </div>
+    </aside>
+
+    <!-- ═══════════ MAIN ═══════════ -->
+    <main class="flex-1 flex flex-col overflow-hidden bg-gradient-to-br from-slate-900 via-slate-900 to-slate-800">
+        <transition name="fade" mode="out-in">
+
+            <!-- ============ VENTAS ============ -->
+            <section v-if="sec==='ventas'" key="ventas" class="h-full flex flex-col p-4 lg:p-6 overflow-hidden">
+                <!-- Barra de búsqueda -->
+                <div class="glass rounded-2xl p-3.5 mb-4 flex items-center gap-3 shadow-xl ring-1 ring-emerald-500/10 focus-within:ring-emerald-500/40 transition-all">
+                    <span class="text-xl text-emerald-500">🔍</span>
+                    <input ref="barcodeRef" v-model="barcode" @keyup.enter="handleBarcode"
+                           type="text" placeholder="Escanear código de barras o buscar producto…"
+                           class="flex-1 bg-transparent text-lg outline-none placeholder-slate-500 text-white font-medium" autofocus>
+                </div>
+                <!-- Carrito -->
+                <div class="flex-1 glass rounded-2xl overflow-hidden flex flex-col shadow-2xl">
+                    <div class="overflow-y-auto flex-1">
+                        <table class="w-full text-left">
+                            <thead class="bg-slate-800/80 sticky top-0 backdrop-blur-lg z-10">
+                                <tr>
+                                    <th class="p-3 lg:p-4 text-xs uppercase tracking-wider text-slate-400 font-semibold border-b border-slate-700/50">Producto</th>
+                                    <th class="p-3 lg:p-4 text-xs uppercase tracking-wider text-slate-400 font-semibold border-b border-slate-700/50 w-28 text-right">Cantidad</th>
+                                    <th class="p-3 lg:p-4 text-xs uppercase tracking-wider text-slate-400 font-semibold border-b border-slate-700/50 w-32 text-right">Precio Unit.</th>
+                                    <th class="p-3 lg:p-4 text-xs uppercase tracking-wider text-slate-400 font-semibold border-b border-slate-700/50 w-32 text-right">Total</th>
+                                    <th class="p-3 lg:p-4 border-b border-slate-700/50 w-14"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="(item,i) in cart" :key="i"
+                                    class="border-b border-slate-800/40 hover:bg-slate-800/30 transition-colors">
+                                    <td class="p-3 lg:p-4 font-medium text-slate-200">{{ item.nombre }}</td>
+                                    <td class="p-2">
+                                        <input type="number" step="any" min="0.001"
+                                               v-model.number="item.cantidad"
+                                               @focus="item._editing='cantidad'"
+                                               @input="recalc(item,'cantidad')"
+                                               class="input-seamless w-full text-right p-2 font-semibold text-white">
+                                    </td>
+                                    <td class="p-2">
+                                        <div class="flex items-center justify-end gap-1">
+                                            <span class="text-slate-500 text-xs">$</span>
+                                            <input type="number" step="any" min="0"
+                                                   v-model.number="item.precio_unitario"
+                                                   @focus="item._editing='precio'"
+                                                   @input="recalc(item,'precio')"
+                                                   class="input-seamless w-full text-right p-2 text-slate-300">
+                                        </div>
+                                    </td>
+                                    <td class="p-2">
+                                        <div class="flex items-center justify-end gap-1">
+                                            <span class="text-emerald-500 text-xs font-bold">$</span>
+                                            <input type="number" step="any" min="0"
+                                                   v-model.number="item.total"
+                                                   @focus="item._editing='total'"
+                                                   @input="recalc(item,'total')"
+                                                   class="input-seamless w-full text-right p-2 font-bold text-emerald-400">
+                                        </div>
+                                    </td>
+                                    <td class="p-2 text-center">
+                                        <button @click="cart.splice(i,1); focusBarcode()"
+                                                class="text-slate-600 hover:text-red-400 p-1.5 rounded-lg hover:bg-red-500/10 transition-all">🗑️</button>
+                                    </td>
+                                </tr>
+                                <tr v-if="cart.length===0">
+                                    <td colspan="5" class="p-16 text-center">
+                                        <div class="text-5xl mb-4 opacity-30">🛒</div>
+                                        <p class="text-slate-500 text-lg">El carrito está vacío</p>
+                                        <p class="text-slate-600 text-sm mt-1">Escanea un código de barras para comenzar</p>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <!-- Footer carrito -->
+                    <div class="bg-slate-800/80 backdrop-blur-xl p-4 lg:p-5 flex flex-col sm:flex-row justify-between items-center border-t border-slate-700/50 gap-4">
+                        <div class="flex items-center gap-3">
+                            <span class="text-slate-400 text-sm font-medium uppercase tracking-wider">Total:</span>
+                            <span class="text-3xl lg:text-4xl font-black text-emerald-400">${{ grandTotal.toFixed(2) }}</span>
+                        </div>
+                        <div class="flex gap-3 w-full sm:w-auto">
+                            <button @click="cart=[]; focusBarcode()"
+                                    class="flex-1 sm:flex-none px-4 py-3 rounded-xl bg-slate-700/50 text-slate-300 hover:bg-slate-600 transition-all font-medium text-sm">🗑️ Limpiar</button>
+                            <button @click="openCredit"
+                                    :disabled="cart.length===0"
+                                    :class="['flex-1 sm:flex-none px-4 py-3 rounded-xl font-medium text-sm transition-all border',
+                                             cart.length===0 ? 'opacity-40 cursor-not-allowed bg-slate-800 border-slate-700 text-slate-500' : 'bg-blue-600/15 text-blue-400 border-blue-500/30 hover:bg-blue-600/25 hover:shadow-lg hover:shadow-blue-600/10']">
+                                📋 Crédito</button>
+                            <button @click="openPay"
+                                    :disabled="cart.length===0"
+                                    :class="['flex-1 sm:flex-none px-6 lg:px-8 py-3 rounded-xl font-bold text-base transition-all',
+                                             cart.length===0 ? 'opacity-40 cursor-not-allowed bg-slate-700 text-slate-500' : 'bg-emerald-600 text-white hover:bg-emerald-500 hover:shadow-xl hover:shadow-emerald-500/30 hover:-translate-y-0.5']">
+                                💵 Cobrar</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============ CAJA ============ -->
+            <section v-else-if="sec==='caja'" key="caja" class="h-full overflow-y-auto p-6">
+                <h2 class="text-3xl font-extrabold mb-8 flex items-center gap-3">💰 Gestión de Caja</h2>
+                <transition name="slide-up" mode="out-in">
+                    <!-- Caja cerrada -->
+                    <div v-if="!cajaOpen" key="closed" class="glass rounded-3xl p-10 max-w-md mx-auto text-center mt-8 shadow-2xl border-emerald-500/10">
+                        <div class="w-20 h-20 bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-6"><span class="text-4xl">🔐</span></div>
+                        <h3 class="text-2xl font-bold mb-2">Caja Cerrada</h3>
+                        <p class="text-slate-400 mb-8">Ingresa el fondo inicial para comenzar a operar</p>
+                        <div class="mb-6 text-left">
+                            <label class="block text-sm font-medium text-slate-300 mb-2">Fondo Inicial</label>
+                            <div class="relative">
+                                <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-lg">$</span>
+                                <input v-model.number="fondoInput" type="number" step="any"
+                                       class="w-full bg-slate-900/60 border border-slate-700 rounded-xl pl-10 pr-4 py-4 text-xl text-white font-bold focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all">
+                            </div>
+                        </div>
+                        <button @click="abrirCaja"
+                                class="w-full py-4 rounded-xl bg-emerald-600 text-white hover:bg-emerald-500 font-bold text-lg transition-all shadow-[0_4px_20px_rgba(16,185,129,0.35)] hover:-translate-y-0.5">
+                            Abrir Caja</button>
+                    </div>
+                    <!-- Caja abierta -->
+                    <div v-else key="open" class="space-y-6">
+                        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
+                            <div class="glass rounded-2xl p-6 group relative overflow-hidden">
+                                <div class="absolute inset-0 bg-slate-400/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                                <div class="relative z-10 flex justify-between items-start mb-3">
+                                    <span class="text-slate-400 font-medium text-sm">Fondo Inicial</span>
+                                    <button @click="editFondo" class="text-[11px] bg-slate-800 px-2.5 py-1 rounded-lg text-blue-400 hover:bg-slate-700 transition-colors font-medium">Editar</button>
+                                </div>
+                                <div class="text-3xl font-extrabold text-white relative z-10">${{ cajaData.fondo_inicial.toFixed(2) }}</div>
+                            </div>
+                            <div class="glass rounded-2xl p-6 relative overflow-hidden">
+                                <div class="absolute -right-6 -top-6 w-28 h-28 bg-emerald-500/10 rounded-full blur-2xl"></div>
+                                <span class="text-slate-400 font-medium text-sm block mb-3">Ventas Efectivo</span>
+                                <div class="text-3xl font-extrabold text-emerald-400 relative z-10">+${{ cajaData.ventas_total.toFixed(2) }}</div>
+                            </div>
+                            <div class="glass rounded-2xl p-6 relative overflow-hidden">
+                                <div class="absolute -right-6 -top-6 w-28 h-28 bg-red-500/10 rounded-full blur-2xl"></div>
+                                <span class="text-slate-400 font-medium text-sm block mb-3">Devoluciones</span>
+                                <div class="text-3xl font-extrabold text-red-400 relative z-10">-${{ cajaData.devoluciones_total.toFixed(2) }}</div>
+                            </div>
+                            <div class="glass rounded-2xl p-6 relative overflow-hidden">
+                                <div class="absolute -right-6 -top-6 w-28 h-28 bg-blue-500/10 rounded-full blur-2xl"></div>
+                                <span class="text-slate-400 font-medium text-sm block mb-3">Cobros de Deudas</span>
+                                <div class="text-3xl font-extrabold text-blue-400 relative z-10">+${{ cajaData.cobros_deudas.toFixed(2) }}</div>
+                            </div>
+                        </div>
+                        <div class="glass rounded-3xl p-8 flex flex-col md:flex-row justify-between items-center border border-emerald-500/20 bg-gradient-to-r from-slate-800/80 to-emerald-900/10 shadow-2xl relative overflow-hidden">
+                            <div class="absolute right-0 top-0 w-72 h-72 bg-emerald-500/5 rounded-full blur-3xl"></div>
+                            <div class="mb-6 md:mb-0 relative z-10 text-center md:text-left">
+                                <div class="text-slate-300 font-medium mb-1 text-sm uppercase tracking-widest">Efectivo Esperado</div>
+                                <div class="text-5xl lg:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-teal-300">
+                                    ${{ cajaEsperado.toFixed(2) }}
+                                </div>
+                            </div>
+                            <button @click="cerrarCaja"
+                                    class="px-8 py-4 rounded-2xl bg-red-600/15 text-red-400 border border-red-500/40 hover:bg-red-600 hover:text-white font-bold text-lg transition-all relative z-10 flex items-center gap-2 hover:shadow-xl hover:shadow-red-600/20">
+                                🔒 Cerrar Turno</button>
+                        </div>
+                    </div>
+                </transition>
+            </section>
+
+            <!-- ============ CUENTAS POR COBRAR ============ -->
+            <section v-else-if="sec==='cuentas'" key="cuentas" class="h-full flex flex-col p-6 overflow-hidden">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-3xl font-extrabold flex items-center gap-3">📋 Cuentas por Cobrar</h2>
+                    <button @click="modalNewClient=true" class="px-5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-500 font-medium text-sm flex items-center gap-2 shadow-lg shadow-blue-600/20 transition-all">+ Nuevo Cliente</button>
+                </div>
+                <div class="glass rounded-xl p-3.5 mb-5 shadow-md">
+                    <input v-model="clientSearch" type="text" placeholder="Buscar cliente…"
+                           class="w-full bg-transparent text-base outline-none placeholder-slate-500 text-white">
+                </div>
+                <div class="flex-1 glass rounded-xl overflow-hidden flex flex-col shadow-lg">
+                    <div class="overflow-y-auto flex-1">
+                        <table class="w-full text-left">
+                            <thead class="bg-slate-800/80 sticky top-0 backdrop-blur-lg z-10">
+                                <tr>
+                                    <th class="p-4 text-xs uppercase tracking-wider text-slate-400 font-semibold border-b border-slate-700/50">Cliente</th>
+                                    <th class="p-4 text-xs uppercase tracking-wider text-slate-400 font-semibold border-b border-slate-700/50">Teléfono</th>
+                                    <th class="p-4 text-xs uppercase tracking-wider text-slate-400 font-semibold border-b border-slate-700/50 text-right">Saldo Pendiente</th>
+                                    <th class="p-4 text-xs uppercase tracking-wider text-slate-400 font-semibold border-b border-slate-700/50 text-center">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="c in filteredClients" :key="c.id" class="border-b border-slate-800/40 hover:bg-slate-800/30 transition-colors">
+                                    <td class="p-4 font-medium text-white">{{ c.nombre }}</td>
+                                    <td class="p-4 text-slate-400">{{ c.telefono || '—' }}</td>
+                                    <td class="p-4 text-right font-bold" :class="c.saldo_pendiente > 0 ? 'text-red-400' : 'text-emerald-400'">${{ c.saldo_pendiente.toFixed(2) }}</td>
+                                    <td class="p-4 text-center">
+                                        <button v-if="c.saldo_pendiente > 0" @click="openAbono(c)"
+                                                class="px-4 py-2 bg-emerald-600/15 text-emerald-400 border border-emerald-500/30 rounded-lg hover:bg-emerald-600/30 text-xs font-semibold transition-colors">
+                                            Registrar Abono</button>
+                                    </td>
+                                </tr>
+                                <tr v-if="filteredClients.length===0">
+                                    <td colspan="4" class="p-10 text-center text-slate-500">No hay clientes registrados o que coincidan con la búsqueda.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============ DEVOLUCIONES ============ -->
+            <section v-else-if="sec==='devoluciones'" key="devoluciones" class="h-full overflow-y-auto p-6">
+                <h2 class="text-3xl font-extrabold mb-8 flex items-center gap-3">↩️ Devoluciones</h2>
+                <div class="glass rounded-2xl p-8 max-w-2xl mx-auto shadow-2xl border-t-4 border-red-500/40">
+                    <div class="mb-8">
+                        <label class="block text-sm font-medium text-slate-300 mb-2">ID de Venta (Ticket #)</label>
+                        <div class="flex gap-3">
+                            <input v-model="retSaleId" @keyup.enter="searchReturn" type="text" placeholder="Ej: 5"
+                                   class="flex-1 bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-red-500 transition-colors">
+                            <button @click="searchReturn" class="px-6 py-3 bg-slate-700 text-white rounded-xl hover:bg-slate-600 font-medium transition-colors">Buscar</button>
+                        </div>
+                    </div>
+                    <transition name="slide-up">
+                        <div v-if="retData" class="space-y-6 border-t border-slate-700/50 pt-6">
+                            <div class="bg-slate-900/40 rounded-xl p-5 border border-slate-700/40">
+                                <div class="flex justify-between text-sm text-slate-400 mb-3">
+                                    <span>Fecha: {{ retData.fecha }}</span>
+                                    <span>Total: ${{ retData.total.toFixed(2) }}</span>
+                                </div>
+                                <div class="space-y-1">
+                                    <div v-for="d in retData.detalles" :key="d.producto_id"
+                                         class="flex justify-between text-sm text-slate-300 py-1">
+                                        <span>{{ d.cantidad }} × {{ d.nombre }}</span>
+                                        <span>${{ d.subtotal.toFixed(2) }}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-300 mb-2">Monto a Devolver ($)</label>
+                                <input v-model.number="retAmount" type="number" step="any"
+                                       class="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-3 text-white text-xl font-bold focus:outline-none focus:border-red-500 transition-colors">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-300 mb-2">Motivo</label>
+                                <input v-model="retReason" type="text" placeholder="Ej: Producto en mal estado"
+                                       class="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-red-500 transition-colors">
+                            </div>
+                            <button @click="processReturn"
+                                    class="w-full py-4 rounded-xl bg-red-600 text-white hover:bg-red-500 font-bold text-lg transition-all shadow-lg shadow-red-600/20 flex justify-center items-center gap-2">
+                                ⚠️ Confirmar Devolución</button>
+                        </div>
+                    </transition>
+                </div>
+            </section>
+
+            <!-- ============ REPORTES ============ -->
+            <section v-else-if="sec==='reportes'" key="reportes" class="h-full flex flex-col p-6 overflow-hidden">
+                <h2 class="text-3xl font-extrabold mb-6 flex items-center gap-3">📊 Reporte de Ventas</h2>
+                <div class="glass rounded-xl p-5 mb-5 flex flex-wrap gap-4 items-end shadow-md">
+                    <div>
+                        <label class="block text-xs font-medium text-slate-400 mb-1">Desde</label>
+                        <input v-model="repDesde" type="date" class="bg-slate-900/60 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-colors">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-slate-400 mb-1">Hasta</label>
+                        <input v-model="repHasta" type="date" class="bg-slate-900/60 border border-slate-700 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-colors">
+                    </div>
+                    <button @click="genReport" class="px-6 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 font-medium transition-colors text-sm">Generar Reporte</button>
+                </div>
+                <div class="flex-1 glass rounded-xl overflow-hidden flex flex-col shadow-lg">
+                    <div class="overflow-y-auto flex-1">
+                        <table class="w-full text-left">
+                            <thead class="bg-slate-800/80 sticky top-0 backdrop-blur-lg z-10">
+                                <tr>
+                                    <th class="p-4 text-xs uppercase tracking-wider text-slate-400 font-semibold border-b border-slate-700/50">Artículo</th>
+                                    <th class="p-4 text-xs uppercase tracking-wider text-slate-400 font-semibold border-b border-slate-700/50 text-right">Cantidad Vendida</th>
+                                    <th class="p-4 text-xs uppercase tracking-wider text-slate-400 font-semibold border-b border-slate-700/50 text-right">Total $</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="(r,i) in repData" :key="i" class="border-b border-slate-800/40 hover:bg-slate-800/30 transition-colors" :class="i%2===0?'':'bg-slate-800/15'">
+                                    <td class="p-4 font-medium text-white">{{ r.articulo }}</td>
+                                    <td class="p-4 text-right text-slate-300">{{ r.cantidad }}</td>
+                                    <td class="p-4 text-right font-semibold text-emerald-400">${{ r.total.toFixed(2) }}</td>
+                                </tr>
+                                <tr v-if="repData.length===0">
+                                    <td colspan="3" class="p-10 text-center text-slate-500">Selecciona fechas y genera el reporte.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div v-if="repData.length>0" class="bg-slate-800/80 p-5 border-t border-slate-700/50 flex justify-end items-center gap-4">
+                        <span class="text-slate-400 font-medium">Total del Periodo:</span>
+                        <span class="text-2xl font-extrabold text-emerald-400">${{ repTotal.toFixed(2) }}</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ============ PRODUCTOS ============ -->
+            <section v-else-if="sec==='productos'" key="productos" class="h-full flex flex-col p-6 overflow-hidden">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-3xl font-extrabold flex items-center gap-3">📦 Catálogo de Productos</h2>
+                    <button @click="openNewProdFromCat" class="px-5 py-2.5 bg-emerald-600 text-white rounded-xl hover:bg-emerald-500 font-medium text-sm flex items-center gap-2 shadow-lg shadow-emerald-600/20 transition-all">+ Nuevo Producto</button>
+                </div>
+                <div class="glass rounded-xl p-3.5 mb-5 shadow-md">
+                    <input v-model="prodSearch" type="text" placeholder="Buscar por código o nombre…"
+                           class="w-full bg-transparent text-base outline-none placeholder-slate-500 text-white">
+                </div>
+                <div class="flex-1 glass rounded-xl overflow-hidden flex flex-col shadow-lg">
+                    <div class="overflow-y-auto flex-1">
+                        <table class="w-full text-left">
+                            <thead class="bg-slate-800/80 sticky top-0 backdrop-blur-lg z-10">
+                                <tr>
+                                    <th class="p-4 text-xs uppercase tracking-wider text-slate-400 font-semibold border-b border-slate-700/50 w-36">Código</th>
+                                    <th class="p-4 text-xs uppercase tracking-wider text-slate-400 font-semibold border-b border-slate-700/50">Nombre</th>
+                                    <th class="p-4 text-xs uppercase tracking-wider text-slate-400 font-semibold border-b border-slate-700/50 w-40 text-right">Precio ($)</th>
+                                    <th class="p-4 text-xs uppercase tracking-wider text-slate-400 font-semibold border-b border-slate-700/50 w-24 text-center">Estado</th>
+                                    <th class="p-4 text-xs uppercase tracking-wider text-slate-400 font-semibold border-b border-slate-700/50 w-28 text-center">Guardar</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="p in filteredProds" :key="p.id" class="border-b border-slate-800/40 hover:bg-slate-800/30 transition-colors">
+                                    <td class="p-4 font-mono text-sm text-slate-400">{{ p.codigo_barras }}</td>
+                                    <td class="p-4 font-medium text-white">{{ p.nombre }}</td>
+                                    <td class="p-2">
+                                        <input type="number" step="any" v-model.number="p._editPrecio"
+                                               @input="p._dirty=true"
+                                               class="input-seamless w-full text-right p-2 font-semibold text-emerald-400">
+                                    </td>
+                                    <td class="p-4 text-center">
+                                        <button @click="toggleProdActive(p)"
+                                                :class="['px-3 py-1 rounded-full text-xs font-bold transition-colors border',
+                                                          p.activo!==false ? 'bg-emerald-900/40 text-emerald-400 border-emerald-500/30' : 'bg-red-900/40 text-red-400 border-red-500/30']">
+                                            {{ p.activo!==false ? 'Activo' : 'Inactivo' }}</button>
+                                    </td>
+                                    <td class="p-4 text-center">
+                                        <button v-if="p._dirty" @click="saveProd(p)"
+                                                class="text-blue-400 hover:text-blue-300 font-semibold text-xs bg-blue-900/30 px-3 py-1.5 rounded-lg border border-blue-500/30 transition-colors">
+                                            Guardar</button>
+                                    </td>
+                                </tr>
+                                <tr v-if="filteredProds.length===0">
+                                    <td colspan="5" class="p-10 text-center text-slate-500">No se encontraron productos.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </transition>
+    </main>
+
+    <!-- ═══════════ MODALES ═══════════ -->
+
+    <!-- Modal Cobrar -->
+    <transition name="fade">
+        <div v-if="modalPay" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" @click.self="modalPay=false; focusBarcode()">
+            <div class="glass rounded-3xl w-full max-w-md p-8 shadow-2xl border border-slate-700/80">
+                <h3 class="text-2xl font-bold mb-6 text-center">Confirmar Cobro</h3>
+                <div class="bg-slate-900/50 rounded-2xl p-6 mb-6 text-center border border-emerald-500/15">
+                    <div class="text-slate-400 text-xs uppercase tracking-widest mb-1">Total a Cobrar</div>
+                    <div class="text-5xl font-black text-emerald-400">${{ grandTotal.toFixed(2) }}</div>
+                </div>
+                <div class="mb-5">
+                    <label class="block text-sm font-medium text-slate-300 mb-2">El cliente pagó con</label>
+                    <div class="relative">
+                        <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">$</span>
+                        <input ref="payRef" v-model.number="payInput" @keyup.enter="confirmPay" type="number" step="any"
+                               class="w-full bg-slate-900/60 border border-slate-700 rounded-xl pl-10 pr-4 py-4 text-2xl text-white font-bold text-center focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all">
+                    </div>
+                </div>
+                <div class="flex justify-between items-center mb-8 px-1">
+                    <span class="text-slate-400 font-medium">Cambio:</span>
+                    <span class="text-2xl font-bold" :class="cambio>=0?'text-emerald-400':'text-red-400'">${{ cambio>=0?cambio.toFixed(2):'0.00' }}</span>
+                </div>
+                <div class="flex gap-3">
+                    <button @click="modalPay=false; focusBarcode()" class="flex-1 py-3 rounded-xl bg-slate-700 text-white hover:bg-slate-600 font-medium transition-colors">Cancelar</button>
+                    <button @click="confirmPay" :disabled="payInput<grandTotal"
+                            :class="['flex-1 py-3 rounded-xl font-bold transition-all',
+                                     payInput>=grandTotal ? 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-lg shadow-emerald-600/30' : 'bg-slate-700 text-slate-500 cursor-not-allowed']">
+                        Cobrar ✓</button>
+                </div>
+            </div>
+        </div>
+    </transition>
+
+    <!-- Modal Nuevo Producto -->
+    <transition name="fade">
+        <div v-if="modalNewProd" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" @click.self="modalNewProd=false; focusBarcode()">
+            <div class="glass rounded-3xl w-full max-w-md p-8 shadow-2xl border border-slate-700/80">
+                <h3 class="text-2xl font-bold mb-6">Nuevo Producto</h3>
+                <div class="space-y-4 mb-8">
+                    <div>
+                        <label class="block text-sm font-medium text-slate-300 mb-1">Código de Barras</label>
+                        <input v-model="newProd.codigo" type="text"
+                               class="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-colors">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-300 mb-1">Nombre del Producto</label>
+                        <input ref="newProdNameRef" v-model="newProd.nombre" @keyup.enter="$refs.newProdPriceRef?.focus()" type="text"
+                               class="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-colors">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-300 mb-1">Precio Unitario ($)</label>
+                        <input ref="newProdPriceRef" v-model.number="newProd.precio" @keyup.enter="saveNewProd" type="number" step="any"
+                               class="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-colors">
+                    </div>
+                </div>
+                <div class="flex gap-3">
+                    <button @click="modalNewProd=false; focusBarcode()" class="flex-1 py-3 rounded-xl bg-slate-700 text-white hover:bg-slate-600 font-medium transition-colors">Cancelar</button>
+                    <button @click="saveNewProd" class="flex-1 py-3 rounded-xl bg-emerald-600 text-white hover:bg-emerald-500 font-bold transition-all shadow-lg shadow-emerald-600/20">Guardar</button>
+                </div>
+            </div>
+        </div>
+    </transition>
+
+    <!-- Modal Crédito -->
+    <transition name="fade">
+        <div v-if="modalCredit" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" @click.self="modalCredit=false; focusBarcode()">
+            <div class="glass rounded-3xl w-full max-w-md p-8 shadow-2xl border border-slate-700/80">
+                <h3 class="text-2xl font-bold mb-6 text-center">Venta a Crédito</h3>
+                <div class="bg-blue-900/20 rounded-2xl p-5 mb-6 text-center border border-blue-500/15">
+                    <div class="text-slate-400 text-xs uppercase tracking-widest mb-1">Total a Deber</div>
+                    <div class="text-3xl font-bold text-blue-400">${{ grandTotal.toFixed(2) }}</div>
+                </div>
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-slate-300 mb-2">Seleccionar Cliente</label>
+                    <select v-model="creditClientId"
+                            class="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-blue-500 transition-colors appearance-none">
+                        <option value="" disabled>-- Selecciona un cliente --</option>
+                        <option v-for="c in clientes" :key="c.id" :value="c.id">{{ c.nombre }}</option>
+                    </select>
+                </div>
+                <button @click="modalNewClient=true" class="w-full mb-6 py-2 text-sm text-blue-400 hover:text-blue-300 transition-colors font-medium">+ Crear nuevo cliente</button>
+                <div class="flex gap-3">
+                    <button @click="modalCredit=false; focusBarcode()" class="flex-1 py-3 rounded-xl bg-slate-700 text-white hover:bg-slate-600 font-medium transition-colors">Cancelar</button>
+                    <button @click="confirmCredit" :disabled="!creditClientId"
+                            :class="['flex-1 py-3 rounded-xl font-bold transition-all',
+                                     creditClientId ? 'bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-600/20' : 'bg-slate-700 text-slate-500 cursor-not-allowed']">
+                        Confirmar</button>
+                </div>
+            </div>
+        </div>
+    </transition>
+
+    <!-- Modal Nuevo Cliente -->
+    <transition name="fade">
+        <div v-if="modalNewClient" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4" @click.self="modalNewClient=false">
+            <div class="glass rounded-3xl w-full max-w-md p-8 shadow-2xl border border-slate-700/80">
+                <h3 class="text-2xl font-bold mb-6">Nuevo Cliente</h3>
+                <div class="space-y-4 mb-8">
+                    <div>
+                        <label class="block text-sm font-medium text-slate-300 mb-1">Nombre Completo</label>
+                        <input v-model="newClient.nombre" type="text"
+                               class="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-blue-500 transition-colors">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-300 mb-1">Teléfono (opcional)</label>
+                        <input v-model="newClient.telefono" type="text"
+                               class="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-blue-500 transition-colors">
+                    </div>
+                </div>
+                <div class="flex gap-3">
+                    <button @click="modalNewClient=false" class="flex-1 py-3 rounded-xl bg-slate-700 text-white hover:bg-slate-600 font-medium transition-colors">Cancelar</button>
+                    <button @click="saveNewClient" class="flex-1 py-3 rounded-xl bg-blue-600 text-white hover:bg-blue-500 font-bold transition-all shadow-lg shadow-blue-600/20">Guardar</button>
+                </div>
+            </div>
+        </div>
+    </transition>
+
+    <!-- Modal Abono -->
+    <transition name="fade">
+        <div v-if="modalAbono" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" @click.self="modalAbono=false">
+            <div class="glass rounded-3xl w-full max-w-md p-8 shadow-2xl border border-slate-700/80">
+                <h3 class="text-2xl font-bold mb-2">Registrar Abono</h3>
+                <p class="text-slate-400 mb-6">Cliente: <span class="text-white font-medium">{{ abonoClient?.nombre }}</span></p>
+                <div class="bg-slate-900/50 rounded-xl p-4 mb-6 flex justify-between items-center border border-slate-700/40">
+                    <span class="text-slate-300">Deuda actual:</span>
+                    <span class="text-xl font-bold text-red-400">${{ abonoClient?.saldo_pendiente.toFixed(2) }}</span>
+                </div>
+                <!-- Cuentas pendientes -->
+                <div v-if="abonoCuentas.length>0" class="mb-6">
+                    <label class="block text-sm font-medium text-slate-300 mb-2">Seleccionar Cuenta</label>
+                    <select v-model="abonoCuentaId" class="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-emerald-500 transition-colors appearance-none">
+                        <option value="" disabled>-- Selecciona una cuenta --</option>
+                        <option v-for="cu in abonoCuentas" :key="cu.id" :value="cu.id">
+                            Venta #{{ cu.venta_id }} — Pendiente: ${{ cu.monto_pendiente.toFixed(2) }}
+                        </option>
+                    </select>
+                </div>
+                <div class="mb-8">
+                    <label class="block text-sm font-medium text-slate-300 mb-2">Monto a abonar ($)</label>
+                    <div class="relative">
+                        <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">$</span>
+                        <input v-model.number="abonoAmount" type="number" step="any"
+                               class="w-full bg-slate-900/60 border border-slate-700 rounded-xl pl-10 pr-4 py-4 text-xl text-white font-bold text-center focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all">
+                    </div>
+                </div>
+                <div class="flex gap-3">
+                    <button @click="modalAbono=false" class="flex-1 py-3 rounded-xl bg-slate-700 text-white hover:bg-slate-600 font-medium transition-colors">Cancelar</button>
+                    <button @click="confirmAbono" :disabled="abonoAmount<=0 || !abonoCuentaId"
+                            :class="['flex-1 py-3 rounded-xl font-bold transition-all',
+                                     abonoAmount>0 && abonoCuentaId ? 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-lg shadow-emerald-600/20' : 'bg-slate-700 text-slate-500 cursor-not-allowed']">
+                        Registrar</button>
+                </div>
+            </div>
+        </div>
+    </transition>
+
+    <!-- Modal Editar Fondo -->
+    <transition name="fade">
+        <div v-if="modalEditFondo" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" @click.self="modalEditFondo=false">
+            <div class="glass rounded-3xl w-full max-w-sm p-8 shadow-2xl border border-slate-700/80">
+                <h3 class="text-xl font-bold mb-6">Editar Fondo Inicial</h3>
+                <div class="mb-6 relative">
+                    <span class="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-bold">$</span>
+                    <input v-model.number="editFondoVal" type="number" step="any"
+                           class="w-full bg-slate-900/60 border border-slate-700 rounded-xl pl-10 pr-4 py-4 text-xl text-white font-bold focus:outline-none focus:border-emerald-500 transition-all">
+                </div>
+                <div class="flex gap-3">
+                    <button @click="modalEditFondo=false" class="flex-1 py-3 rounded-xl bg-slate-700 text-white hover:bg-slate-600 font-medium transition-colors">Cancelar</button>
+                    <button @click="saveFondo" class="flex-1 py-3 rounded-xl bg-emerald-600 text-white hover:bg-emerald-500 font-bold transition-all">Guardar</button>
+                </div>
+            </div>
+        </div>
+    </transition>
+
+    <!-- Modal Cierre de Caja -->
+    <transition name="fade">
+        <div v-if="modalCierreCaja" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4" @click.self="modalCierreCaja=false">
+            <div class="glass rounded-3xl w-full max-w-lg p-8 shadow-2xl border border-slate-700/80">
+                <h3 class="text-2xl font-bold mb-6 text-center">🔒 Resumen de Cierre</h3>
+                <div class="space-y-3 mb-8">
+                    <div class="flex justify-between py-2 border-b border-slate-700/40"><span class="text-slate-400">Fondo Inicial</span><span class="text-white font-semibold">${{ cierreData.fondo_inicial?.toFixed(2) }}</span></div>
+                    <div class="flex justify-between py-2 border-b border-slate-700/40"><span class="text-slate-400">Ventas Efectivo</span><span class="text-emerald-400 font-semibold">+${{ cierreData.ventas_total?.toFixed(2) }}</span></div>
+                    <div class="flex justify-between py-2 border-b border-slate-700/40"><span class="text-slate-400">Devoluciones</span><span class="text-red-400 font-semibold">-${{ cierreData.devoluciones_total?.toFixed(2) }}</span></div>
+                    <div class="flex justify-between py-2 border-b border-slate-700/40"><span class="text-slate-400">Cobros de Deudas</span><span class="text-blue-400 font-semibold">+${{ cierreData.cobros_deudas?.toFixed(2) }}</span></div>
+                    <div class="flex justify-between py-3 text-xl"><span class="text-white font-bold">TOTAL EN CAJA</span><span class="text-emerald-400 font-black">${{ cierreData.fondo_final?.toFixed(2) }}</span></div>
+                </div>
+                <button @click="modalCierreCaja=false" class="w-full py-3 rounded-xl bg-slate-700 text-white hover:bg-slate-600 font-medium transition-colors">Cerrar</button>
+            </div>
+        </div>
+    </transition>
+
+    <!-- ═══════════ TICKET PRINT (hidden, only visible on print) ═══════════ -->
+    <div id="ticket-print" v-if="lastTicket" style="display:none;">
+        <pre style="margin:0;white-space:pre-wrap;">================================
+   VERDULERÍA / POLLERÍA
+================================
+Fecha: {{ lastTicket.fecha }}
+Ticket #: {{ lastTicket.id }}
+--------------------------------</pre>
+        <div v-for="it in lastTicket.items" :key="it.nombre" style="display:flex;justify-content:space-between;font-size:11px;margin:2px 0;">
+            <span>{{ it.nombre }}</span>
+            <span>{{ it.cantidad }} x ${{ it.precio_unitario.toFixed(2) }} = ${{ it.total.toFixed(2) }}</span>
+        </div>
+        <pre style="margin:0;white-space:pre-wrap;">--------------------------------
+TOTAL:            ${{ lastTicket.total.toFixed(2) }}
+Pagó:             ${{ lastTicket.pago.toFixed(2) }}
+Cambio:           ${{ lastTicket.cambio.toFixed(2) }}
+================================
+   ¡Gracias por su compra!
+================================</pre>
+    </div>
+</div>
+
+<script>
+const { createApp, ref, computed, watch, nextTick, onMounted } = Vue;
+
+createApp({
+    setup() {
+        // ── Helpers ──
+        const API = (url, opts={}) => fetch(url, {headers:{'Content-Type':'application/json'}, ...opts}).then(r=>r.json());
+        const toasts = ref([]);
+        const toast = (msg, type='success') => {
+            const id = Date.now() + Math.random();
+            toasts.value.push({id, msg, type});
+            setTimeout(()=>{ toasts.value = toasts.value.filter(t=>t.id!==id); }, 3500);
+        };
+
+        // ── Navigation ──
+        const sec = ref('ventas');
+        const tabs = [
+            {id:'ventas', label:'Ventas', icon:'🛒'},
+            {id:'caja', label:'Caja', icon:'💰'},
+            {id:'cuentas', label:'Cuentas x Cobrar', icon:'📋'},
+            {id:'devoluciones', label:'Devoluciones', icon:'↩️'},
+            {id:'reportes', label:'Reportes', icon:'📊'},
+            {id:'productos', label:'Productos', icon:'📦'},
+        ];
+        const goTo = (id) => {
+            sec.value = id;
+            if (id==='ventas') nextTick(()=>focusBarcode());
+            if (id==='caja') loadCaja();
+            if (id==='cuentas') loadClientes();
+            if (id==='productos') loadProductos();
+        };
+
+        // ── Refs ──
+        const barcodeRef = ref(null);
+        const payRef = ref(null);
+        const newProdNameRef = ref(null);
+        const newProdPriceRef = ref(null);
+        const focusBarcode = () => { nextTick(()=>{ if(barcodeRef.value) barcodeRef.value.focus(); }); };
+
+        // ═══════════════════════════════
+        //  1. VENTAS
+        // ═══════════════════════════════
+        const barcode = ref('');
+        const cart = ref([]);
+        const grandTotal = computed(()=> cart.value.reduce((s,i)=>s+(i.total||0), 0));
+
+        const recalc = (item, field) => {
+            if (field==='cantidad' || field==='precio') {
+                item.total = Math.round((item.cantidad * item.precio_unitario)*100)/100;
+            } else if (field==='total') {
+                if (item.cantidad > 0) {
+                    item.precio_unitario = Math.round((item.total / item.cantidad)*100)/100;
+                }
+            }
+        };
+
+        const handleBarcode = async () => {
+            const code = barcode.value.trim();
+            if (!code) return;
+            barcode.value = '';
+            try {
+                const res = await API(`/api/productos/codigo/${encodeURIComponent(code)}`);
+                if (res.ok) {
+                    const p = res.data;
+                    // Si ya está en carrito, incrementar cantidad
+                    const existing = cart.value.find(c => c.producto_id === p.id);
+                    if (existing) {
+                        existing.cantidad += 1;
+                        recalc(existing, 'cantidad');
+                    } else {
+                        cart.value.push({
+                            producto_id: p.id, nombre: p.nombre,
+                            cantidad: 1, precio_unitario: p.precio,
+                            total: p.precio, _editing: null
+                        });
+                    }
+                    toast(`${p.nombre} agregado`);
+                } else {
+                    // Producto no encontrado → abrir modal
+                    newProd.value = {codigo: code, nombre:'', precio: 0};
+                    modalNewProd.value = true;
+                    nextTick(()=>{ if(newProdNameRef.value) newProdNameRef.value.focus(); });
+                }
+            } catch(e) {
+                // 404 → abrir modal
+                newProd.value = {codigo: code, nombre:'', precio: 0};
+                modalNewProd.value = true;
+                nextTick(()=>{ if(newProdNameRef.value) newProdNameRef.value.focus(); });
+            }
+            focusBarcode();
+        };
+
+        // Modal Nuevo Producto
+        const modalNewProd = ref(false);
+        const newProd = ref({codigo:'', nombre:'', precio:0});
+
+        const saveNewProd = async () => {
+            const p = newProd.value;
+            if (!p.codigo || !p.nombre || !p.precio) { toast('Completa todos los campos','error'); return; }
+            const res = await API('/api/productos', {method:'POST', body: JSON.stringify({codigo_barras:p.codigo, nombre:p.nombre, precio:p.precio})});
+            if (res.ok) {
+                const created = res.data;
+                cart.value.push({
+                    producto_id: created.id, nombre: created.nombre || p.nombre,
+                    cantidad: 1, precio_unitario: created.precio || p.precio,
+                    total: created.precio || p.precio, _editing: null
+                });
+                modalNewProd.value = false;
+                toast(`${p.nombre} registrado y agregado`);
+                focusBarcode();
+            } else {
+                toast(res.error || 'Error al guardar', 'error');
+            }
+        };
+
+        const openNewProdFromCat = () => {
+            newProd.value = {codigo:'', nombre:'', precio:0};
+            modalNewProd.value = true;
+            nextTick(()=>{ if(newProdNameRef.value) newProdNameRef.value.focus(); });
+        };
+
+        // Modal Cobrar
+        const modalPay = ref(false);
+        const payInput = ref(0);
+        const cambio = computed(()=> (payInput.value||0) - grandTotal.value);
+
+        const openPay = () => {
+            if (cart.value.length===0) return;
+            payInput.value = 0;
+            modalPay.value = true;
+            nextTick(()=>{ if(payRef.value) payRef.value.focus(); });
+        };
+
+        const lastTicket = ref(null);
+
+        const confirmPay = async () => {
+            if (payInput.value < grandTotal.value) { toast('Monto insuficiente','error'); return; }
+            const items = cart.value.map(c=>({producto_id:c.producto_id, cantidad:c.cantidad, precio_unitario:c.precio_unitario, subtotal:c.total}));
+            const res = await API('/api/ventas', {method:'POST', body: JSON.stringify({items})});
+            if (res.ok) {
+                // Preparar ticket
+                lastTicket.value = {
+                    id: res.data.id,
+                    fecha: new Date().toLocaleString('es-MX'),
+                    items: cart.value.map(c=>({nombre:c.nombre, cantidad:c.cantidad, precio_unitario:c.precio_unitario, total:c.total})),
+                    total: grandTotal.value,
+                    pago: payInput.value,
+                    cambio: cambio.value
+                };
+                modalPay.value = false;
+                cart.value = [];
+                toast(`Venta #${res.data.id} registrada — Cambio: $${lastTicket.value.cambio.toFixed(2)}`);
+                // Imprimir ticket
+                nextTick(()=>{
+                    const el = document.getElementById('ticket-print');
+                    if(el) el.style.display = 'block';
+                    setTimeout(()=>{
+                        window.print();
+                        setTimeout(()=>{ if(el) el.style.display='none'; }, 500);
+                    }, 200);
+                });
+                focusBarcode();
+            } else {
+                toast(res.error || 'Error al registrar venta', 'error');
+            }
+        };
+
+        // Modal Crédito
+        const modalCredit = ref(false);
+        const creditClientId = ref('');
+        const clientes = ref([]);
+
+        const loadClientes = async () => {
+            const res = await API('/api/clientes');
+            if (res.ok) clientes.value = res.data;
+        };
+
+        const openCredit = () => {
+            if (cart.value.length===0) return;
+            creditClientId.value = '';
+            loadClientes();
+            modalCredit.value = true;
+        };
+
+        const confirmCredit = async () => {
+            if (!creditClientId.value) return;
+            const items = cart.value.map(c=>({producto_id:c.producto_id, cantidad:c.cantidad, precio_unitario:c.precio_unitario, subtotal:c.total}));
+            const res = await API('/api/ventas', {method:'POST', body: JSON.stringify({items, cliente_id: creditClientId.value})});
+            if (res.ok) {
+                modalCredit.value = false;
+                cart.value = [];
+                toast(`Venta a crédito #${res.data.id} registrada`);
+                focusBarcode();
+            } else {
+                toast(res.error || 'Error al registrar', 'error');
+            }
+        };
+
+        // Modal Nuevo Cliente
+        const modalNewClient = ref(false);
+        const newClient = ref({nombre:'', telefono:''});
+
+        const saveNewClient = async () => {
+            if (!newClient.value.nombre.trim()) { toast('Ingresa el nombre','error'); return; }
+            const res = await API('/api/clientes', {method:'POST', body: JSON.stringify(newClient.value)});
+            if (res.ok) {
+                toast(`Cliente "${newClient.value.nombre}" creado`);
+                newClient.value = {nombre:'', telefono:''};
+                modalNewClient.value = false;
+                loadClientes();
+            } else {
+                toast(res.error || 'Error', 'error');
+            }
+        };
+
+        // ═══════════════════════════════
+        //  2. CAJA
+        // ═══════════════════════════════
+        const cajaOpen = ref(false);
+        const cajaData = ref({fondo_inicial:0, ventas_total:0, devoluciones_total:0, cobros_deudas:0});
+        const cajaEsperado = computed(()=> cajaData.value.fondo_inicial + cajaData.value.ventas_total - cajaData.value.devoluciones_total + cajaData.value.cobros_deudas);
+        const fondoInput = ref(0);
+
+        const loadCaja = async () => {
+            const res = await API('/api/caja/estado');
+            if (res.ok && res.data && res.data.estado === 'abierta') {
+                cajaOpen.value = true;
+                cajaData.value = res.data;
+            } else {
+                cajaOpen.value = false;
+            }
+        };
+
+        const abrirCaja = async () => {
+            const res = await API('/api/caja/abrir', {method:'POST', body: JSON.stringify({fondo_inicial: fondoInput.value||0})});
+            if (res.ok) {
+                toast('Caja abierta correctamente');
+                loadCaja();
+            } else {
+                toast(res.error || 'Error', 'error');
+            }
+        };
+
+        const modalEditFondo = ref(false);
+        const editFondoVal = ref(0);
+        const editFondo = () => { editFondoVal.value = cajaData.value.fondo_inicial; modalEditFondo.value = true; };
+        const saveFondo = async () => {
+            const res = await API('/api/caja/fondo', {method:'PUT', body: JSON.stringify({fondo_inicial: editFondoVal.value})});
+            if (res.ok) {
+                toast('Fondo actualizado');
+                modalEditFondo.value = false;
+                loadCaja();
+            } else {
+                toast(res.error || 'Error', 'error');
+            }
+        };
+
+        const modalCierreCaja = ref(false);
+        const cierreData = ref({});
+        const cerrarCaja = async () => {
+            if (!confirm('¿Estás seguro de cerrar la caja?')) return;
+            const res = await API('/api/caja/cerrar', {method:'POST'});
+            if (res.ok) {
+                cierreData.value = res.data;
+                modalCierreCaja.value = true;
+                cajaOpen.value = false;
+                toast('Caja cerrada');
+            } else {
+                toast(res.error || 'Error', 'error');
+            }
+        };
+
+        // ═══════════════════════════════
+        //  3. CUENTAS POR COBRAR
+        // ═══════════════════════════════
+        const clientSearch = ref('');
+        const filteredClients = computed(()=>{
+            const q = clientSearch.value.toLowerCase();
+            return clientes.value.filter(c=> c.nombre.toLowerCase().includes(q) || (c.telefono||'').includes(q));
+        });
+
+        const modalAbono = ref(false);
+        const abonoClient = ref(null);
+        const abonoAmount = ref(0);
+        const abonoCuentas = ref([]);
+        const abonoCuentaId = ref('');
+
+        const openAbono = async (c) => {
+            abonoClient.value = c;
+            abonoAmount.value = 0;
+            abonoCuentaId.value = '';
+            // Cargar cuentas del cliente
+            const res = await API(`/api/clientes/${c.id}`);
+            if (res.ok) {
+                abonoCuentas.value = (res.data.cuentas || []).filter(cu=>cu.estado==='pendiente');
+                if (abonoCuentas.value.length === 1) abonoCuentaId.value = abonoCuentas.value[0].id;
+            }
+            modalAbono.value = true;
+        };
+
+        const confirmAbono = async () => {
+            if (abonoAmount.value <= 0 || !abonoCuentaId.value) return;
+            const res = await API('/api/abonos', {method:'POST', body: JSON.stringify({cuenta_id: abonoCuentaId.value, monto: abonoAmount.value})});
+            if (res.ok) {
+                toast(`Abono de $${abonoAmount.value.toFixed(2)} registrado`);
+                modalAbono.value = false;
+                loadClientes();
+            } else {
+                toast(res.error || 'Error', 'error');
+            }
+        };
+
+        // ═══════════════════════════════
+        //  4. DEVOLUCIONES
+        // ═══════════════════════════════
+        const retSaleId = ref('');
+        const retData = ref(null);
+        const retAmount = ref(0);
+        const retReason = ref('');
+
+        const searchReturn = async () => {
+            if (!retSaleId.value) return;
+            const res = await API(`/api/ventas/${retSaleId.value}`);
+            if (res.ok) {
+                retData.value = {
+                    id: res.data.id,
+                    fecha: new Date(res.data.fecha).toLocaleString('es-MX'),
+                    total: res.data.total,
+                    estado: res.data.estado,
+                    detalles: res.data.detalles || []
+                };
+                retAmount.value = res.data.total;
+            } else {
+                toast(res.error || 'Venta no encontrada', 'error');
+                retData.value = null;
+            }
+        };
+
+        const processReturn = async () => {
+            if (!retData.value || retAmount.value <= 0) return;
+            if (retData.value.estado === 'devuelta') { toast('Esta venta ya fue devuelta', 'error'); return; }
+            const res = await API('/api/devoluciones', {method:'POST', body: JSON.stringify({venta_id: retData.value.id, monto_devuelto: retAmount.value, motivo: retReason.value})});
+            if (res.ok) {
+                toast('Devolución registrada correctamente');
+                retData.value = null;
+                retSaleId.value = '';
+                retAmount.value = 0;
+                retReason.value = '';
+            } else {
+                toast(res.error || 'Error', 'error');
+            }
+        };
+
+        // ═══════════════════════════════
+        //  5. REPORTES
+        // ═══════════════════════════════
+        const today = new Date().toISOString().slice(0,10);
+        const repDesde = ref(today);
+        const repHasta = ref(today);
+        const repData = ref([]);
+        const repTotal = ref(0);
+
+        const genReport = async () => {
+            const res = await API(`/api/reportes?desde=${repDesde.value}&hasta=${repHasta.value}`);
+            if (res.ok) {
+                repData.value = res.data;
+                repTotal.value = res.grand_total || 0;
+            } else {
+                toast(res.error || 'Error', 'error');
+            }
+        };
+
+        // ═══════════════════════════════
+        //  6. PRODUCTOS (catálogo)
+        // ═══════════════════════════════
+        const productos = ref([]);
+        const prodSearch = ref('');
+
+        const loadProductos = async () => {
+            const res = await API('/api/productos');
+            if (res.ok) {
+                productos.value = res.data.map(p=>({...p, _editPrecio: p.precio, _dirty: false}));
+            }
+        };
+
+        const filteredProds = computed(()=>{
+            const q = prodSearch.value.toLowerCase();
+            return productos.value.filter(p=> p.nombre.toLowerCase().includes(q) || p.codigo_barras.includes(q));
+        });
+
+        const saveProd = async (p) => {
+            const res = await API(`/api/productos/${p.id}`, {method:'PUT', body: JSON.stringify({precio: p._editPrecio})});
+            if (res.ok) {
+                p.precio = p._editPrecio;
+                p._dirty = false;
+                toast(`Precio de "${p.nombre}" actualizado`);
+            } else {
+                toast(res.error || 'Error', 'error');
+            }
+        };
+
+        const toggleProdActive = async (p) => {
+            const newVal = p.activo === false ? true : false;
+            const res = await API(`/api/productos/${p.id}`, {method:'PUT', body: JSON.stringify({activo: newVal})});
+            if (res.ok) {
+                p.activo = newVal;
+                toast(`${p.nombre} ${newVal ? 'activado' : 'desactivado'}`);
+            }
+        };
+
+        // ── Init ──
+        onMounted(()=>{
+            loadCaja();
+            loadClientes();
+            loadProductos();
+            focusBarcode();
+        });
+
+        return {
+            // Navigation
+            sec, tabs, goTo,
+            // Toasts
+            toasts,
+            // Refs
+            barcodeRef, payRef, newProdNameRef, newProdPriceRef,
+            focusBarcode,
+            // Ventas
+            barcode, cart, grandTotal, recalc, handleBarcode,
+            // Modal Nuevo Producto
+            modalNewProd, newProd, saveNewProd, openNewProdFromCat,
+            // Modal Cobrar
+            modalPay, payInput, cambio, openPay, confirmPay,
+            // Ticket
+            lastTicket,
+            // Modal Crédito
+            modalCredit, creditClientId, openCredit, confirmCredit,
+            // Modal Nuevo Cliente
+            modalNewClient, newClient, saveNewClient,
+            // Caja
+            cajaOpen, cajaData, cajaEsperado, fondoInput,
+            abrirCaja, cerrarCaja, loadCaja,
+            modalEditFondo, editFondoVal, editFondo, saveFondo,
+            modalCierreCaja, cierreData,
+            // Cuentas
+            clientes, clientSearch, filteredClients, loadClientes,
+            modalAbono, abonoClient, abonoAmount, abonoCuentas, abonoCuentaId, openAbono, confirmAbono,
+            // Devoluciones
+            retSaleId, retData, retAmount, retReason, searchReturn, processReturn,
+            // Reportes
+            repDesde, repHasta, repData, repTotal, genReport,
+            // Productos
+            productos, prodSearch, filteredProds, loadProductos, saveProd, toggleProdActive,
+        };
+    }
+}).mount('#app');
+</script>
+{% endraw %}
+</body>
+</html>
