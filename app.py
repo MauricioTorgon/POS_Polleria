@@ -5,7 +5,7 @@ from flask import Flask, request, jsonify, render_template
 from datetime import datetime
 from sqlalchemy import func
 
-from models import db, Producto, Venta, VentaDetalle, Caja, Cliente, CuentaCobrar, Abono, Devolucion
+from models import db, Producto, Venta, VentaDetalle, Caja, Cliente, CuentaCobrar, Abono, Devolucion, MovimientoCaja, EntradaInventario
 from seed import seed_products
 
 app = Flask(__name__)
@@ -44,7 +44,7 @@ def list_productos():
     productos = query.all()
     return jsonify({
         "ok": True,
-        "data": [{"id": p.id, "codigo_barras": p.codigo_barras, "nombre": p.nombre, "precio": p.precio} for p in productos]
+        "data": [{"id": p.id, "codigo_barras": p.codigo_barras, "nombre": p.nombre, "precio": p.precio, "unidad_medida": p.unidad_medida, "stock": p.stock} for p in productos]
     })
 
 
@@ -59,18 +59,19 @@ def create_producto():
     producto = Producto(
         codigo_barras=data['codigo_barras'],
         nombre=data['nombre'],
-        precio=float(data['precio'])
+        precio=float(data['precio']),
+        unidad_medida=data.get('unidad_medida', 'Kg')
     )
     db.session.add(producto)
     db.session.commit()
-    return jsonify({"ok": True, "data": {"id": producto.id, "codigo_barras": producto.codigo_barras, "nombre": producto.nombre, "precio": producto.precio}})
+    return jsonify({"ok": True, "data": {"id": producto.id, "codigo_barras": producto.codigo_barras, "nombre": producto.nombre, "precio": producto.precio, "unidad_medida": producto.unidad_medida, "stock": producto.stock}})
 
 
 @app.route('/api/productos/codigo/<codigo>', methods=['GET'])
 def get_producto_by_codigo(codigo):
     p = Producto.query.filter_by(codigo_barras=codigo, activo=True).first()
     if p:
-        return jsonify({"ok": True, "data": {"id": p.id, "codigo_barras": p.codigo_barras, "nombre": p.nombre, "precio": p.precio}})
+        return jsonify({"ok": True, "data": {"id": p.id, "codigo_barras": p.codigo_barras, "nombre": p.nombre, "precio": p.precio, "unidad_medida": p.unidad_medida, "stock": p.stock}})
     return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
 
 
@@ -81,15 +82,20 @@ def update_producto(id):
         return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
     data = request.json
     if 'codigo_barras' in data:
+        existing = Producto.query.filter(Producto.codigo_barras == data['codigo_barras'], Producto.id != id).first()
+        if existing:
+            return jsonify({"ok": False, "error": "El código de barras ya está en uso por otro producto"}), 400
         p.codigo_barras = data['codigo_barras']
     if 'nombre' in data:
         p.nombre = data['nombre']
     if 'precio' in data:
         p.precio = float(data['precio'])
+    if 'unidad_medida' in data:
+        p.unidad_medida = data['unidad_medida']
     if 'activo' in data:
         p.activo = bool(data['activo'])
     db.session.commit()
-    return jsonify({"ok": True, "data": {"id": p.id, "codigo_barras": p.codigo_barras, "nombre": p.nombre, "precio": p.precio, "activo": p.activo}})
+    return jsonify({"ok": True, "data": {"id": p.id, "codigo_barras": p.codigo_barras, "nombre": p.nombre, "precio": p.precio, "unidad_medida": p.unidad_medida, "stock": p.stock, "activo": p.activo}})
 
 
 # ──────────────────────────────────────────────
@@ -109,23 +115,29 @@ def create_venta():
     cliente_id = data.get('cliente_id')
     es_credito = bool(cliente_id)
     total = sum(float(item['subtotal']) for item in items)
+    pago = float(data.get('pago', 0.0))
+    cambio = float(data.get('cambio', 0.0))
     estado_venta = 'credito' if es_credito else 'completada'
 
-    venta = Venta(total=total, cliente_id=cliente_id, estado=estado_venta, caja_id=caja.id)
+    venta = Venta(total=total, pago=pago, cambio=cambio, cliente_id=cliente_id, estado=estado_venta, caja_id=caja.id)
     db.session.add(venta)
     db.session.flush()
 
     for item in items:
+        producto = Producto.query.get(item['producto_id'])
+        if producto:
+            producto.stock -= float(item['cantidad'])
+            
         detalle = VentaDetalle(
             venta_id=venta.id,
             producto_id=item['producto_id'],
             cantidad=float(item['cantidad']),
             precio_unitario=float(item['precio_unitario']),
+            descuento=float(item.get('descuento', 0.0)),
             subtotal=float(item['subtotal'])
         )
         db.session.add(detalle)
 
-    # Venta a crédito: crear cuenta por cobrar
     if es_credito:
         cliente = Cliente.query.get(cliente_id)
         if not cliente:
@@ -144,7 +156,7 @@ def create_venta():
 
     try:
         db.session.commit()
-        return jsonify({"ok": True, "data": {"id": venta.id, "total": venta.total}})
+        return jsonify({"ok": True, "data": {"id": venta.id, "total": venta.total, "pago": venta.pago, "cambio": venta.cambio}})
     except Exception as e:
         db.session.rollback()
         return jsonify({"ok": False, "error": str(e)}), 500
@@ -168,14 +180,24 @@ def list_ventas():
             pass
 
     ventas = query.order_by(Venta.fecha.desc()).all()
-    data = [{
-        "id": v.id,
-        "fecha": v.fecha.isoformat(),
-        "total": v.total,
-        "cliente_id": v.cliente_id,
-        "estado": v.estado,
-        "caja_id": v.caja_id
-    } for v in ventas]
+    data = []
+    for v in ventas:
+        data.append({
+            "id": v.id,
+            "fecha": v.fecha.isoformat(),
+            "total": v.total,
+            "cliente_id": v.cliente_id,
+            "estado": v.estado,
+            "caja_id": v.caja_id,
+            "detalles": [{
+                "producto_id": d.producto_id,
+                "nombre": Producto.query.get(d.producto_id).nombre if Producto.query.get(d.producto_id) else "Desconocido",
+                "cantidad": d.cantidad,
+                "precio_unitario": d.precio_unitario,
+                "descuento": d.descuento,
+                "subtotal": d.subtotal
+            } for d in v.detalles]
+        })
     return jsonify({"ok": True, "data": data})
 
 
@@ -192,12 +214,16 @@ def get_venta(id):
             "nombre": p.nombre if p else "Desconocido",
             "cantidad": d.cantidad,
             "precio_unitario": d.precio_unitario,
-            "subtotal": d.subtotal
+            "descuento": d.descuento,
+            "subtotal": d.subtotal,
+            "unidad_medida": p.unidad_medida if p else 'Kg'
         })
     return jsonify({"ok": True, "data": {
         "id": v.id,
         "fecha": v.fecha.isoformat(),
         "total": v.total,
+        "pago": v.pago,
+        "cambio": v.cambio,
         "cliente_id": v.cliente_id,
         "estado": v.estado,
         "caja_id": v.caja_id,
@@ -206,7 +232,7 @@ def get_venta(id):
 
 
 # ──────────────────────────────────────────────
-# CAJA
+# CAJA Y MOVIMIENTOS
 # ──────────────────────────────────────────────
 @app.route('/api/caja/estado', methods=['GET'])
 def get_caja_estado():
@@ -221,6 +247,8 @@ def get_caja_estado():
         "ventas_total": caja.ventas_total,
         "devoluciones_total": caja.devoluciones_total,
         "cobros_deudas": caja.cobros_deudas,
+        "ingresos_total": caja.ingresos_total,
+        "egresos_total": caja.egresos_total,
         "fondo_final": caja.fondo_final,
         "estado": caja.estado
     }})
@@ -244,7 +272,7 @@ def cerrar_caja():
         return jsonify({"ok": False, "error": "No hay caja abierta"}), 400
     caja.fecha_cierre = datetime.now()
     caja.estado = 'cerrada'
-    caja.fondo_final = caja.fondo_inicial + caja.ventas_total - caja.devoluciones_total + caja.cobros_deudas
+    caja.fondo_final = caja.fondo_inicial + caja.ventas_total - caja.devoluciones_total + caja.cobros_deudas + caja.ingresos_total - caja.egresos_total
     db.session.commit()
     return jsonify({"ok": True, "data": {
         "id": caja.id,
@@ -252,6 +280,8 @@ def cerrar_caja():
         "ventas_total": caja.ventas_total,
         "devoluciones_total": caja.devoluciones_total,
         "cobros_deudas": caja.cobros_deudas,
+        "ingresos_total": caja.ingresos_total,
+        "egresos_total": caja.egresos_total,
         "fondo_final": caja.fondo_final
     }})
 
@@ -268,8 +298,36 @@ def actualizar_fondo_caja():
     return jsonify({"ok": True, "data": {"id": caja.id, "fondo_inicial": caja.fondo_inicial}})
 
 
+@app.route('/api/caja/movimientos', methods=['POST'])
+def registrar_movimiento():
+    caja = get_open_caja()
+    if not caja:
+        return jsonify({"ok": False, "error": "No hay caja abierta"}), 400
+    data = request.json
+    tipo = data.get('tipo')
+    monto = float(data.get('monto', 0))
+    if tipo not in ['ingreso', 'egreso'] or monto <= 0:
+        return jsonify({"ok": False, "error": "Tipo o monto inválido"}), 400
+    
+    mov = MovimientoCaja(
+        caja_id=caja.id,
+        tipo=tipo,
+        monto=monto,
+        concepto=data.get('concepto', '')
+    )
+    db.session.add(mov)
+    
+    if tipo == 'ingreso':
+        caja.ingresos_total += monto
+    else:
+        caja.egresos_total += monto
+        
+    db.session.commit()
+    return jsonify({"ok": True, "data": {"id": mov.id, "tipo": mov.tipo, "monto": mov.monto}})
+
+
 # ──────────────────────────────────────────────
-# CLIENTES
+# CLIENTES Y ABONOS
 # ──────────────────────────────────────────────
 @app.route('/api/clientes', methods=['GET'])
 def list_clientes():
@@ -317,9 +375,6 @@ def get_cliente(id):
     }})
 
 
-# ──────────────────────────────────────────────
-# ABONOS
-# ──────────────────────────────────────────────
 @app.route('/api/abonos', methods=['POST'])
 def crear_abono():
     data = request.json
@@ -343,7 +398,6 @@ def crear_abono():
     abono = Abono(cuenta_id=cuenta.id, cliente_id=cliente.id, monto=monto, nota=data.get('nota', ''))
     db.session.add(abono)
 
-    # Sumar a cobros de deuda en caja abierta
     caja = get_open_caja()
     if caja:
         caja.cobros_deudas += monto
@@ -379,20 +433,85 @@ def registrar_devolucion():
     )
     db.session.add(devolucion)
     caja.devoluciones_total += monto_devuelto
+    
+    # Retornar stock
+    for detalle in venta.detalles:
+        producto = Producto.query.get(detalle.producto_id)
+        if producto:
+            producto.stock += detalle.cantidad
+            
     db.session.commit()
     return jsonify({"ok": True, "data": {"id": devolucion.id}})
 
 
 # ──────────────────────────────────────────────
-# REPORTES
+# INVENTARIO
 # ──────────────────────────────────────────────
-@app.route('/api/reportes', methods=['GET'])
+@app.route('/api/inventario/entradas', methods=['POST'])
+def registrar_entrada():
+    data = request.json
+    producto_id = data.get('producto_id')
+    cantidad = float(data.get('cantidad', 0))
+    if not producto_id or cantidad <= 0:
+        return jsonify({"ok": False, "error": "Datos inválidos"}), 400
+        
+    producto = Producto.query.get(producto_id)
+    if not producto:
+        return jsonify({"ok": False, "error": "Producto no encontrado"}), 404
+        
+    entrada = EntradaInventario(
+        producto_id=producto.id,
+        cantidad=cantidad,
+        nota=data.get('nota', '')
+    )
+    producto.stock += cantidad
+    db.session.add(entrada)
+    db.session.commit()
+    return jsonify({"ok": True, "data": {"id": entrada.id, "nuevo_stock": producto.stock}})
+
+
+@app.route('/api/inventario/entradas', methods=['GET'])
+def get_entradas():
+    entradas = EntradaInventario.query.order_by(EntradaInventario.fecha.desc()).all()
+    data = []
+    for e in entradas:
+        data.append({
+            "id": e.id,
+            "producto": e.producto.nombre if e.producto else "Desconocido",
+            "cantidad": e.cantidad,
+            "unidad_medida": e.producto.unidad_medida if e.producto else "Kg",
+            "nota": e.nota,
+            "fecha": e.fecha.isoformat()
+        })
+    return jsonify({"ok": True, "data": data})
+
+
+# ──────────────────────────────────────────────
+# REPORTES E INVENTARIO
+# ──────────────────────────────────────────────
+@app.route('/api/reportes/inventario', methods=['GET'])
+def get_reporte_inventario():
+    productos = Producto.query.all()
+    data = []
+    for p in productos:
+        data.append({
+            "id": p.id,
+            "codigo": p.codigo_barras,
+            "articulo": p.nombre,
+            "unidad_medida": p.unidad_medida,
+            "existencia": p.stock,
+            "precio": p.precio
+        })
+    return jsonify({"ok": True, "data": data})
+
+@app.route('/api/reportes/ventas', methods=['GET'])
 def get_reporte():
     desde = request.args.get('desde')
     hasta = request.args.get('hasta')
 
     query = db.session.query(
         Producto.nombre.label('articulo'),
+        Producto.unidad_medida.label('unidad_medida'),
         func.sum(VentaDetalle.cantidad).label('cantidad'),
         func.sum(VentaDetalle.subtotal).label('total')
     ).join(
@@ -415,7 +534,7 @@ def get_reporte():
             pass
 
     resultados = query.group_by(Producto.id).all()
-    data = [{"articulo": r.articulo, "cantidad": round(r.cantidad, 3), "total": round(r.total, 2)} for r in resultados]
+    data = [{"articulo": r.articulo, "unidad_medida": r.unidad_medida, "cantidad": round(r.cantidad, 3), "total": round(r.total, 2)} for r in resultados]
     grand_total = round(sum(r.total for r in resultados), 2)
     return jsonify({"ok": True, "data": data, "grand_total": grand_total})
 
@@ -435,16 +554,21 @@ def get_ticket(venta_id):
             "descripcion": p.nombre if p else "Desconocido",
             "cantidad": d.cantidad,
             "precio": d.precio_unitario,
-            "importe": d.subtotal
+            "descuento": d.descuento,
+            "importe": d.subtotal,
+            "unidad_medida": p.unidad_medida if p else 'Kg'
         })
     return jsonify({"ok": True, "data": {
-        "negocio": "Verdulería / Pollería",
-        "fecha": v.fecha.strftime('%Y-%m-%d %H:%M:%S'),
+        "negocio": "POLLOS ANDY",
+        "fecha": v.fecha.strftime('%d/%m/%Y'),
+        "hora": v.fecha.strftime('%H:%M'),
         "ticket_id": v.id,
         "caja_id": v.caja_id,
         "estado": v.estado,
         "detalles": detalles,
-        "total": v.total
+        "total": v.total,
+        "pago": v.pago,
+        "cambio": v.cambio
     }})
 
 

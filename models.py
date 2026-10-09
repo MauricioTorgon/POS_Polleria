@@ -9,6 +9,8 @@ class Producto(db.Model):
     codigo_barras = db.Column(db.String(50), unique=True, nullable=False)
     nombre = db.Column(db.String(100), nullable=False)
     precio = db.Column(db.Float, nullable=False)
+    unidad_medida = db.Column(db.String(10), default='Kg')  # 'Kg' o 'Pza'
+    stock = db.Column(db.Float, default=0.0)
     activo = db.Column(db.Boolean, default=True)
 
 class Venta(db.Model):
@@ -16,6 +18,8 @@ class Venta(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     fecha = db.Column(db.DateTime, default=datetime.now)
     total = db.Column(db.Float, nullable=False)
+    pago = db.Column(db.Float, default=0.0)
+    cambio = db.Column(db.Float, default=0.0)
     cliente_id = db.Column(db.Integer, db.ForeignKey('clientes.id'), nullable=True)
     estado = db.Column(db.String(20), default='completada')
     caja_id = db.Column(db.Integer, db.ForeignKey('caja.id'), nullable=False)
@@ -28,6 +32,7 @@ class VentaDetalle(db.Model):
     producto_id = db.Column(db.Integer, db.ForeignKey('productos.id'), nullable=False)
     cantidad = db.Column(db.Float, nullable=False)
     precio_unitario = db.Column(db.Float, nullable=False)
+    descuento = db.Column(db.Float, default=0.0)
     subtotal = db.Column(db.Float, nullable=False)
 
 class Caja(db.Model):
@@ -39,8 +44,19 @@ class Caja(db.Model):
     ventas_total = db.Column(db.Float, default=0.0)
     devoluciones_total = db.Column(db.Float, default=0.0)
     cobros_deudas = db.Column(db.Float, default=0.0)
+    ingresos_total = db.Column(db.Float, default=0.0)
+    egresos_total = db.Column(db.Float, default=0.0)
     fondo_final = db.Column(db.Float, nullable=True)
     estado = db.Column(db.String(20), default='abierta')
+
+class MovimientoCaja(db.Model):
+    __tablename__ = 'movimientos_caja'
+    id = db.Column(db.Integer, primary_key=True)
+    caja_id = db.Column(db.Integer, db.ForeignKey('caja.id'), nullable=False)
+    tipo = db.Column(db.String(10), nullable=False)  # 'ingreso' o 'egreso'
+    monto = db.Column(db.Float, nullable=False)
+    concepto = db.Column(db.String(200), nullable=True)
+    fecha = db.Column(db.DateTime, default=datetime.now)
 
 class Cliente(db.Model):
     __tablename__ = 'clientes'
@@ -77,3 +93,12 @@ class Devolucion(db.Model):
     monto_devuelto = db.Column(db.Float, nullable=False)
     motivo = db.Column(db.String(200), nullable=True)
     caja_id = db.Column(db.Integer, db.ForeignKey('caja.id'), nullable=False)
+
+class EntradaInventario(db.Model):
+    __tablename__ = 'entradas_inventario'
+    id = db.Column(db.Integer, primary_key=True)
+    producto_id = db.Column(db.Integer, db.ForeignKey('productos.id'), nullable=False)
+    cantidad = db.Column(db.Float, nullable=False)
+    nota = db.Column(db.String(200), nullable=True)
+    fecha = db.Column(db.DateTime, default=datetime.now)
+    producto = db.relationship('Producto', backref='entradas')
