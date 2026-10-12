@@ -1,5 +1,7 @@
 import os
 import webbrowser
+import threading
+import time
 from threading import Timer
 from flask import Flask, request, jsonify, render_template
 from datetime import datetime
@@ -7,6 +9,8 @@ from sqlalchemy import func
 
 from models import db, Producto, Venta, VentaDetalle, Caja, Cliente, CuentaCobrar, Abono, Devolucion, MovimientoCaja, EntradaInventario
 from seed import seed_products
+import backup_service
+
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///pos.db'
@@ -274,6 +278,12 @@ def cerrar_caja():
     caja.estado = 'cerrada'
     caja.fondo_final = caja.fondo_inicial + caja.ventas_total - caja.devoluciones_total + caja.cobros_deudas + caja.ingresos_total - caja.egresos_total
     db.session.commit()
+
+    # Disparar respaldo al cerrar caja en segundo plano
+    cfg = backup_service.load_config()
+    if cfg.get('backup_on_caja_cierre', True):
+        threading.Thread(target=backup_service.ejecutar_respaldo, kwargs={"motivo": f"Cierre de Caja #{caja.id}"}, daemon=True).start()
+
     return jsonify({"ok": True, "data": {
         "id": caja.id,
         "fondo_inicial": caja.fondo_inicial,
@@ -573,13 +583,106 @@ def get_ticket(venta_id):
 
 
 # ──────────────────────────────────────────────
+# RESPALDOS (BACKUPS) Y TELEGRAM
+# ──────────────────────────────────────────────
+@app.route('/api/backup/config', methods=['GET'])
+def get_backup_config():
+    cfg = backup_service.load_config()
+    # Ocultar token parcialmente para seguridad visual
+    safe_token = cfg.get('bot_token', '')
+    if safe_token and len(safe_token) > 10:
+        safe_token_masked = safe_token[:6] + '...' + safe_token[-4:]
+    else:
+        safe_token_masked = safe_token
+    return jsonify({
+        "ok": True,
+        "data": {
+            **cfg,
+            "bot_token_masked": safe_token_masked
+        }
+    })
+
+
+@app.route('/api/backup/config', methods=['POST'])
+def save_backup_config():
+    data = request.json or {}
+    updated = backup_service.save_config(data)
+    return jsonify({"ok": True, "data": updated})
+
+
+@app.route('/api/backup/now', methods=['POST'])
+def trigger_backup_now():
+    motivo = request.json.get('motivo', 'Manual desde interfaz') if request.json else 'Manual desde interfaz'
+    ok, msg = backup_service.ejecutar_respaldo(motivo=motivo)
+    return jsonify({"ok": ok, "message": msg})
+
+
+@app.route('/api/backup/test', methods=['POST'])
+def test_telegram():
+    cfg = backup_service.load_config()
+    bot_token = cfg.get('bot_token', '').strip()
+    chat_id = cfg.get('chat_id', '').strip()
+    if not bot_token or not chat_id:
+        return jsonify({"ok": False, "error": "Debes configurar Bot Token y Chat ID primero."}), 400
+    ok, res = backup_service.send_message_to_telegram(
+        bot_token,
+        chat_id,
+        "🔔 <b>¡Prueba exitosa!</b>\nTu POS Verdulería está conectado correctamente con Telegram para enviar respaldos automáticos."
+    )
+    return jsonify({"ok": ok, "message": "Mensaje de prueba enviado exitosamente" if ok else str(res)})
+
+
+def background_backup_worker():
+    """Hilo en segundo plano para realizar respaldos cada X minutos."""
+    while True:
+        try:
+            cfg = backup_service.load_config()
+            interval_minutes = int(cfg.get('backup_interval_minutes', 120))
+            if interval_minutes < 15:
+                interval_minutes = 15
+            time.sleep(interval_minutes * 60)
+            if cfg.get('enabled'):
+                backup_service.ejecutar_respaldo(motivo="Respaldo periódico automático")
+        except Exception as e:
+            time.sleep(60)
+
+
+# ──────────────────────────────────────────────
 # AUTO-ABRIR NAVEGADOR E INICIAR SERVIDOR
 # ──────────────────────────────────────────────
 def open_browser():
-    webbrowser.open('http://127.0.0.1:5000/')
+    webbrowser.open('http://localhost:5000/')
+
+
+def print_network_info():
+    import socket
+    print("=" * 60)
+    print(" SERVIDOR POS ACTIVO")
+    print("=" * 60)
+    print("  Acceso Local (este equipo):")
+    print("    http://localhost:5000")
+    print("    http://127.0.0.1:5000")
+    print("\n  Acceso Remoto (desde celular Android u otra PC en tu red Wi-Fi):")
+    try:
+        # Obtener IP local de la interfaz activa
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(('8.8.8.8', 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+        print(f"    http://{local_ip}:5000")
+    except Exception:
+        hostname = socket.gethostname()
+        for ip in socket.gethostbyname_ex(hostname)[2]:
+            if not ip.startswith('127.'):
+                print(f"    http://{ip}:5000")
+    print("=" * 60 + "\n")
 
 
 if __name__ == '__main__':
     if os.environ.get('WERKZEUG_RUN_RELOADER') != 'true':
+        print_network_info()
         Timer(1.5, open_browser).start()
-    app.run(debug=True, port=5000)
+        threading.Thread(target=background_backup_worker, daemon=True).start()
+    app.run(host='0.0.0.0', port=5000, debug=True)
+
+

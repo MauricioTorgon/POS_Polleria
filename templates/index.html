@@ -485,6 +485,96 @@
                                 </tr>
                             </tbody>
                         </table>
+            <!-- ============ RESPALDOS & NUBE ============ -->
+            <section v-else-if="sec==='respaldos'" key="respaldos" class="h-full flex flex-col p-6 overflow-y-auto">
+                <div class="flex justify-between items-center mb-6">
+                    <div>
+                        <h2 class="text-3xl font-extrabold flex items-center gap-3">☁️ Respaldos & Nube (Telegram)</h2>
+                        <p class="text-sm text-slate-400 mt-1">Copia de seguridad automática de tu base de datos directamente a tu teléfono sin costo.</p>
+                    </div>
+                    <button @click="triggerManualBackup" :disabled="backupLoading"
+                            class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 text-white font-bold rounded-xl shadow-lg shadow-emerald-600/20 flex items-center gap-2 transition-all">
+                        <span>💾</span> {{ backupLoading ? 'Generando...' : 'Hacer Respaldo Ahora' }}
+                    </button>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <!-- Configuración Telegram -->
+                    <div class="lg:col-span-2 glass rounded-2xl p-6 border border-slate-700/80 shadow-xl space-y-6">
+                        <div class="flex items-center justify-between border-b border-slate-800 pb-4">
+                            <div>
+                                <h3 class="text-lg font-bold text-white flex items-center gap-2">🤖 Conectar con Telegram</h3>
+                                <p class="text-xs text-slate-400">Recibe el archivo <code class="text-emerald-400">pos.db</code> cada vez que se cierre la caja o por tiempo.</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" v-model="backupConfig.enabled" class="sr-only peer">
+                                <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                                <span class="ml-3 text-sm font-semibold text-slate-300">{{ backupConfig.enabled ? 'Activado' : 'Desactivado' }}</span>
+                            </label>
+                        </div>
+
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Bot Token de Telegram</label>
+                                <input type="text" v-model="backupConfig.bot_token" placeholder="Ej. 123456789:ABCdefGhIJKlmNoPQRstuVWXyz"
+                                       class="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-emerald-500 font-mono">
+                                <span class="text-[11px] text-slate-500 mt-1 block">Se obtiene gratis creando un bot con @BotFather en Telegram.</span>
+                            </div>
+
+                            <div>
+                                <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Chat ID o ID del Canal / Grupo</label>
+                                <input type="text" v-model="backupConfig.chat_id" placeholder="Ej. 987654321 o -1001234567890"
+                                       class="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-emerald-500 font-mono">
+                                <span class="text-[11px] text-slate-500 mt-1 block">Tu ID personal (puedes consultarlo con @userinfobot en Telegram).</span>
+                            </div>
+
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                                <div>
+                                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Intervalo de respaldo (minutos)</label>
+                                    <input type="number" min="15" step="15" v-model.number="backupConfig.backup_interval_minutes"
+                                           class="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-emerald-500 font-bold">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Respaldos locales a conservar</label>
+                                    <input type="number" min="5" max="100" v-model.number="backupConfig.keep_local_backups"
+                                           class="w-full bg-slate-900/60 border border-slate-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-emerald-500 font-bold">
+                                </div>
+                            </div>
+
+                            <div class="flex items-center gap-3 pt-2">
+                                <input type="checkbox" id="chkCierre" v-model="backupConfig.backup_on_caja_cierre" class="rounded bg-slate-800 border-slate-700 text-emerald-500 focus:ring-0 w-4 h-4">
+                                <label for="chkCierre" class="text-sm text-slate-300">Enviar respaldo automáticamente cada vez que se <b>Cierre Caja</b></label>
+                            </div>
+                        </div>
+
+                        <div class="flex gap-3 pt-4 border-t border-slate-800">
+                            <button @click="testTelegramConnection" :disabled="testLoading"
+                                    class="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-semibold border border-slate-700 flex items-center gap-2 transition-all">
+                                <span>📲</span> {{ testLoading ? 'Probando...' : 'Probar Conexión (Test)' }}
+                            </button>
+                            <button @click="saveBackupSettings"
+                                    class="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold shadow-lg shadow-emerald-600/20 transition-all ml-auto">
+                                Guardar Configuración
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Instrucciones Guía Rápida -->
+                    <div class="glass rounded-2xl p-6 border border-slate-700/80 shadow-xl flex flex-col justify-between">
+                        <div>
+                            <h3 class="text-lg font-bold text-white flex items-center gap-2 mb-4">📖 ¿Cómo activarlo en 2 min?</h3>
+                            <ol class="space-y-3 text-xs text-slate-300 list-decimal pl-4 leading-relaxed">
+                                <li>Abre Telegram y busca <b class="text-emerald-400">@BotFather</b>.</li>
+                                <li>Envía <code class="bg-slate-950 px-1 py-0.5 rounded text-emerald-300">/newbot</code>, asígnale un nombre y copia el <b>Token</b> que te entregue.</li>
+                                <li>Inicia tu nuevo bot enviándole <code class="bg-slate-950 px-1 py-0.5 rounded text-emerald-300">/start</code> desde tu Telegram.</li>
+                                <li>Busca el bot <b class="text-emerald-400">@userinfobot</b> y envíale un mensaje para ver tu <b>Id</b> numérico.</li>
+                                <li>Pega el Token y tu Chat ID aquí y presiona <b>Guardar Configuración</b>.</li>
+                            </ol>
+                        </div>
+
+                        <div class="mt-6 p-4 rounded-xl bg-emerald-950/40 border border-emerald-500/20 text-xs text-emerald-200 leading-relaxed">
+                            💡 <b>Seguridad:</b> Los archivos se respaldan en la carpeta local <code class="font-mono text-white">/backups</code> y se envían de forma privada y encriptada por la red de Telegram a tu cuenta.
+                        </div>
                     </div>
                 </div>
             </section>
@@ -603,6 +693,7 @@ createApp({
             {id:'inventario', label:'Inventario', icon:'📦'},
             {id:'reportes', label:'Reportes', icon:'📊'},
             {id:'productos', label:'Productos', icon:'🏷️'},
+            {id:'respaldos', label:'Respaldos / Nube', icon:'☁️'},
         ];
         const goTo = (id) => {
             sec.value = id;
@@ -611,6 +702,7 @@ createApp({
             if (id==='cuentas') loadClientes();
             if (id==='productos') loadProductos();
             if (id==='inventario') { loadEntradas(); loadSalidas(); loadInventarioReport(); }
+            if (id==='respaldos') loadBackupSettings();
         };
 
         const barcodeRef = ref(null);
@@ -888,10 +980,77 @@ createApp({
             if (res.ok) { repData.value = res.data; repTotal.value = res.grand_total || 0; }
         };
 
+        // ── RESPALDOS Y TELEGRAM ──
+        const backupConfig = ref({
+            enabled: false,
+            bot_token: '',
+            chat_id: '',
+            backup_interval_minutes: 120,
+            backup_on_caja_cierre: true,
+            keep_local_backups: 15
+        });
+        const backupLoading = ref(false);
+        const testLoading = ref(false);
+
+        const loadBackupSettings = async () => {
+            const res = await API('/api/backup/config');
+            if (res.ok && res.data) {
+                backupConfig.value = res.data;
+            }
+        };
+
+        const saveBackupSettings = async () => {
+            const res = await API('/api/backup/config', {
+                method: 'POST',
+                body: JSON.stringify(backupConfig.value)
+            });
+            if (res.ok) {
+                toast('Configuración de respaldos guardada');
+            } else {
+                toast('Error al guardar configuración', 'error');
+            }
+        };
+
+        const triggerManualBackup = async () => {
+            backupLoading.value = true;
+            try {
+                const res = await API('/api/backup/now', {
+                    method: 'POST',
+                    body: JSON.stringify({ motivo: 'Respaldo manual desde panel' })
+                });
+                if (res.ok) {
+                    toast(res.message || 'Respaldo generado con éxito');
+                } else {
+                    toast(res.message || 'Error al generar respaldo', 'error');
+                }
+            } catch (err) {
+                toast('Error al comunicarse con el servidor', 'error');
+            } finally {
+                backupLoading.value = false;
+            }
+        };
+
+        const testTelegramConnection = async () => {
+            testLoading.value = true;
+            try {
+                const res = await API('/api/backup/test', { method: 'POST' });
+                if (res.ok) {
+                    toast('¡Mensaje enviado con éxito a tu Telegram!');
+                } else {
+                    toast(res.error || res.message || 'Error al probar conexión', 'error');
+                }
+            } catch (err) {
+                toast('Error de red al probar bot', 'error');
+            } finally {
+                testLoading.value = false;
+            }
+        };
+
         // ── INIT ──
         onMounted(()=>{
             loadCaja();
             loadProductos();
+            loadBackupSettings();
             focusBarcode();
         });
 
@@ -906,6 +1065,7 @@ createApp({
             invTab, groupedEntradas, groupedSalidas, repInvData, repInvDate, repInvTotalUnidades,
             modalEntrada, entProdId, entCantidad, entNota, saveEntrada, loadInventarioReport,
             repDesde, repHasta, repData, repTotal, genReport,
+            backupConfig, backupLoading, testLoading, loadBackupSettings, saveBackupSettings, triggerManualBackup, testTelegramConnection,
             clientes: ref([]), openAbono: ()=>{} // placeholders for brevity
         };
     }

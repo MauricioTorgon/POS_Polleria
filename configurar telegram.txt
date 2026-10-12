@@ -1,0 +1,6 @@
+Abre tu Telegram en el celular o PC y busca @BotFather.
+Escribe /newbot, dale un nombre (por ej: Mi POS Verduleria) y un usuario (por ej: pos_verduleria_bot).
+Te entregará un Token (ejemplo: 7123456789:AAEjK...).
+Entra al bot recién creado y presiona Iniciar / Start.
+Para saber tu Chat ID, busca en Telegram @userinfobot y envíale un "hola"; te responderá con tu Id numérico (ejemplo: 123456789).
+Entra en tu POS a la pestaña ☁️ Respaldos / Nube, ingresa ambos datos, presiona "Probar Conexión" y luego "Guardar Configuración".
